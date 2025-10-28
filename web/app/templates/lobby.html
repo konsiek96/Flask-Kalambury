@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Lobby - Kalambury{% endblock %}
+
+{% block content %}
+<div class="container">
+  <h2 class="mb-4 text-center">Lobby gier</h2>
+
+  <div class="d-flex justify-content-center mb-3">
+    <a href="{{ url_for('main.create_game') }}" class="btn btn-success">Utwórz nową grę</a>
+  </div>
+
+  {% if games %}
+    <div class="row row-cols-1 row-cols-md-2 g-4" id="games-list-container">
+      {% for game in games %}
+      <div class="col" id="game-card-{{ game.id }}">
+        <div class="card h-100 shadow-sm">
+          <div class="card-body">
+            <h5 class="card-title">{{ game.name }}</h5>
+				<div class="game" id="game-{{ game.id }}">
+					<p>Gracze w grze: <span id="player-count-{{ game.id }}">{{ game.players|length }}</span> / {{ game.max_players }}</p>
+				</div>
+            <p class="card-text mb-1">Czas rundy: {{ game.round_time }} sekund</p>
+            {% if game.is_private %}
+            <p class="card-text text-muted"><i>Pokój prywatny</i></p>
+            {% endif %}
+          </div>
+          <div class="card-footer text-center">
+            <a href="{{ url_for('main.join_game', game_id=game.id) }}" class="btn btn-primary w-100">Dołącz</a>
+			{% if game.creator == username %}
+				<form method="POST" action="{{ url_for('main.delete_game', game_id=game.id) }}" style="display:inline;">
+				  <button type="submit" class="btn btn-danger btn-sm">Usuń</button>
+				</form>
+			{% endif %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="text-center text-muted mt-4" id="no-games-message" style="display: none;">Brak dostępnych gier. Utwórz nową grę!</p>
+  {% else %}
+        <p class="text-center text-muted" id="no-games-message">Brak dostępnych gier. Utwórz nową grę!</p>
+  {% endif %}
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="//cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<script>
+    const socket = io();
+    const gamesContainer = document.getElementById('games-list-container');
+    const noGamesMessage = document.getElementById('no-games-message');
+
+    // =================================================================
+    // 🟢 1. OBSŁUGA USUWANIA POKOJU W CZASIE RZECZYWISTYM ('game_deleted')
+    // =================================================================
+    socket.on('game_deleted', (data) => {
+        const gameId = data.game_id;
+        const gameElement = document.getElementById(`game-card-${gameId}`);
+        
+        if (gameElement) {
+            // gameElement jest już elementem <div class="col">, więc go po prostu usuwamy
+            gameElement.remove();
+            
+            // Logika sprawdzająca, czy to była ostatnia gra
+            if (gamesContainer && gamesContainer.children.length === 0) {
+                 // Sprawdź, czy gamesContainer jest widoczny (był w DOM) i go ukryj
+                 gamesContainer.style.display = 'none'; 
+                 
+                 if (noGamesMessage) {
+                    noGamesMessage.style.display = 'block'; // Pokaż wiadomość
+                 }
+            }
+        }
+    });
+
+    // =================================================================
+    // 🟢 2. OBSŁUGA AKTUALIZACJI LICZBY GRACZY ('update_player_count')
+    // =================================================================
+    socket.on('update_player_count', function(data) {
+        const el = document.getElementById(`player-count-${data.game_id}`);
+        if(el) el.innerText = data.count;
+    });
+
+    // Ujednolicenie eventu 'player_count_update' z 'update_player_count'
+    // Jeśli używasz obu, zostawiasz ten który serwer wysyła.
+    // Zostawię na razie jeden, ponieważ Twój kod używał 'update_player_count'.
+    // Jeśli serwer wysyłał 'player_count_update', zmień nazwę eventu powyżej.
+</script>
+{% endblock %}

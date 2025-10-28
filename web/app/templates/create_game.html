@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Utwórz grę{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-6">
+    <div class="card shadow-sm p-4">
+      <h2 class="card-title mb-3">Utwórz nową grę</h2>
+      <form method="POST" action="{{ url_for('main.create_game') }}">
+        <div class="mb-3">
+          <label for="name" class="form-label">Nazwa gry:</label>
+          <input type="text" class="form-control" id="name" name="name" value="Gra" required>
+        </div>
+
+        <div class="mb-3 form-check">
+          <input type="checkbox" class="form-check-input" id="is_private" name="is_private">
+          <label class="form-check-label" for="is_private">Pokój prywatny</label>
+        </div>
+
+        <div class="mb-3">
+          <label for="password" class="form-label">Hasło (jeśli prywatna):</label>
+          <input type="password" class="form-control" id="password" name="password">
+        </div>
+
+        <div class="mb-3">
+          <label for="max_players" class="form-label">Maksymalna liczba graczy:</label>
+          <input type="number" class="form-control" id="max_players" name="max_players" value="8" min="2" max="20">
+        </div>
+
+        <div class="mb-3">
+          <label for="round_time" class="form-label">Czas rundy (sekundy):</label>
+          <input type="number" class="form-control" id="round_time" name="round_time" value="120" min="30" max="600">
+        </div>
+
+        <button type="submit" class="btn btn-success w-100">Utwórz grę</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

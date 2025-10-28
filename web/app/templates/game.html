@@ -1,0 +1,360 @@
+{% extends "base.html" %}
+{% block title %}Gra - Kalambury{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+  <div class="row">
+    
+    <div class="col-md-7 mb-3">
+      <div class="card shadow-sm p-3">
+        <h5 class="card-title">
+          <b>Rysuje:</b> <span id="currentDrawer">{{ game.drawer or "?" }}</span>
+        </h5>
+
+        <h6>
+          <b>Hasło:</b>
+          <span id="currentWordDisplay">
+          {% if game.current_word and username == game.drawer %}
+            {{ game.current_word }}
+          {% elif game.current_word %}
+            (Ukryte: {{ (game.current_word or '')|length }} liter)
+          {% else %}
+            ...
+          {% endif %}
+          </span>
+        </h6>
+
+        <canvas id="drawingCanvas" class="border w-100" style="height:400px;"></canvas>
+
+        <div class="mt-3 d-flex align-items-center">
+          <label for="colorPicker" class="me-2">Kolor:</label>
+          <input type="color" id="colorPicker" value="#000000">
+          
+          <label for="lineWidthInput" class="ms-3 me-2">Grubość:</label>
+          <input type="range" id="lineWidthInput" value="3" min="1" max="20" style="width: 100px;">
+          
+          <button id="clearCanvasBtn" class="btn btn-sm btn-danger ms-3">Wyczyść</button>
+        </div>
+
+        <div class="mt-2">
+          <span>Pozostały czas: <span id="timer">{{ game.round_time }}</span> sekund</span>
+        </div>
+
+        {% if game.drawer and username == game.drawer %}
+          <button id="startGameBtn" class="btn btn-success mt-3" style="display:block;">Start rundy</button>
+        {% else %}
+          <button id="startGameBtn" class="btn btn-success mt-3" style="display:none;">Start rundy</button>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="col-md-2 mb-3 d-flex">
+      <div class="card shadow-sm p-3 w-100 d-flex flex-column"> 
+        <h5 class="card-title">Punkty</h5>
+        <div id="playerList" class="flex-grow-1" style="overflow-y: auto;">
+          </div>
+      </div>
+    </div>
+
+    <div class="col-md-3 mb-3 d-flex">
+      <div class="card shadow-sm p-3 w-100 d-flex flex-column"> 
+        <h5 class="card-title">Czat</h5>
+        
+        <div id="chatBox" class="border p-2 mb-2 bg-light flex-grow-1" style="overflow-y:auto;"></div>
+
+        <form id="chatForm">
+          <div class="input-group">
+            <input type="text" id="chatInput" class="form-control" placeholder="Wpisz wiadomość...">
+            <button type="submit" class="btn btn-primary">Wyślij</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script>
+const socket = io();
+const username = "{{ username }}";
+const gameId = "{{ game.id }}";
+const chatBox = document.getElementById('chatBox');
+const timerDisplay = document.getElementById('timer');
+const currentWordDisplay = document.getElementById('currentWordDisplay');
+const currentDrawerDisplay = document.getElementById('currentDrawer');
+const startGameBtn = document.getElementById('startGameBtn');
+const playerList = document.getElementById('playerList');
+
+// Elementy do rysowania
+const canvas = document.getElementById('drawingCanvas');
+const ctx = canvas.getContext('2d');
+const clearCanvasBtn = document.getElementById('clearCanvasBtn');
+const colorPicker = document.getElementById('colorPicker');
+const lineWidthInput = document.getElementById('lineWidthInput');
+
+let timerInterval = null;
+let isDrawing = false;
+let lastX = 0;
+let lastY = 0;
+
+// =================== CANVAS SETUP ===================
+
+function resizeCanvas() {
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width;
+    canvas.height = rect.height;
+    ctx.clearRect(0, 0, canvas.width, canvas.height); 
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+
+// 🎨 Główna funkcja rysująca
+function drawLine(x1, y1, x2, y2, color, width) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+}
+
+function handleDrawing(e) {
+    if (!isDrawing) return;
+    
+    const x = e.offsetX;
+    const y = e.offsetY;
+
+    // Rysowanie lokalne
+    const currentColor = colorPicker.value;
+    const currentWidth = lineWidthInput.value;
+    drawLine(lastX, lastY, x, y, currentColor, currentWidth);
+
+    // Wysyłanie do serwera (tylko przez rysującego)
+    if (currentDrawerDisplay.textContent === username) {
+        socket.emit('drawing_data', {
+            game_id: gameId,
+            x1: lastX,
+            y1: lastY,
+            x2: x,
+            y2: y,
+            color: currentColor,
+            width: currentWidth
+        });
+    }
+
+    lastX = x;
+    lastY = y;
+}
+
+function startDraw(e) {
+    // 🛑 WALIDACJA: Tylko rysujący może rozpocząć rysowanie
+    if (currentDrawerDisplay.textContent !== username) return; 
+    
+    isDrawing = true;
+    lastX = e.offsetX;
+    lastY = e.offsetY;
+    // Umożliwia rysowanie kropki przy kliknięciu (pojedynczy punkt)
+    drawLine(lastX, lastY, lastX, lastY, colorPicker.value, lineWidthInput.value); 
+}
+
+function stopDraw() {
+    isDrawing = false;
+}
+
+// 🔸 Event Listeners dla rysowania
+canvas.addEventListener('mousedown', startDraw);
+canvas.addEventListener('mousemove', handleDrawing);
+canvas.addEventListener('mouseup', stopDraw);
+canvas.addEventListener('mouseout', stopDraw);
+
+// 🔸 Obsługa czyszczenia
+if (clearCanvasBtn) {
+    clearCanvasBtn.addEventListener('click', () => {
+        // 🛑 WALIDACJA: Tylko rysujący może czyścić
+        if (currentDrawerDisplay.textContent === username) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            socket.emit('clear_canvas', { game_id: gameId });
+        }
+    });
+}
+// ----------------------------------------------------
+
+
+// =================== SOCKET HANDLERS ===================
+
+socket.on('connect', () => {
+  console.log("[DEBUG] Socket connected:", socket.id);
+  socket.emit('join_game', { game_id: gameId, username: username });
+});
+
+// 🎨 Odbieranie danych rysowania od innych
+socket.on('draw_line', data => {
+    drawLine(
+        parseFloat(data.x1), parseFloat(data.y1), 
+        parseFloat(data.x2), parseFloat(data.y2), 
+        data.color, parseFloat(data.width)
+    );
+});
+
+// 🎨 Odbieranie polecenia czyszczenia
+socket.on('clear_drawing', () => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+});
+
+/**
+ * Przewija pole czatu na sam dół.
+ */
+function scrollChatToBottom() {
+    chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+
+// ✅ Obsługa czatu
+document.getElementById('chatForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const msg = document.getElementById('chatInput').value.trim();
+  if (!msg) return;
+  socket.emit('chat_message', { username, room: gameId, msg });
+  document.getElementById('chatInput').value = '';
+});
+
+// 🟢 KLUCZOWA ZMIANA: Dodanie znacznika czasu (data.time)
+socket.on('chat_message', data => {
+  chatBox.innerHTML += `<div><small class="text-muted">[${data.time}]</small> <b>${data.username}:</b> ${data.msg}</div>`;
+  scrollChatToBottom();
+});
+
+socket.on('system_message', data => {
+  chatBox.innerHTML += `<div class="text-muted"><i>${data.msg}</i></div>`;
+  scrollChatToBottom();
+});
+
+// 🟢 NOWA OBSŁUGA: Aktualizacja listy graczy (wraz z punktami)
+socket.on('update_player_list', data => {
+    playerList.innerHTML = ''; // Wyczyść starą listę
+    data.players.forEach(p => {
+        // Używamy Bootstrapowych klas dla ładniejszego wyglądu
+        const item = document.createElement('div');
+        item.classList.add('d-flex', 'justify-content-between', 'align-items-center', 'py-1', 'border-bottom');
+        item.innerHTML = `
+            <span class="${p.username === username ? 'fw-bold text-primary' : ''}">${p.username}</span>
+            <span class="badge bg-success rounded-pill">${p.score}</span>
+        `;
+        playerList.appendChild(item);
+    });
+});
+
+
+// ✅ Obsługa przycisku START
+if (startGameBtn) {
+  startGameBtn.addEventListener('click', () => {
+    console.log("[DEBUG] Start clicked by", username);
+    socket.emit('start_game', { game_id: gameId });
+  });
+}
+
+// 🟢 Nowy rysujący
+socket.on('drawer_changed', data => {
+    const is_drawer = data.new_drawer === username;
+    
+    currentDrawerDisplay.textContent = data.new_drawer;
+    currentWordDisplay.textContent = '...'; // Ukryj hasło
+    
+    ctx.clearRect(0, 0, canvas.width, canvas.height); // Wyczyść canvas przy zmianie rysującego
+
+    if (startGameBtn) {
+        if (is_drawer) {
+            startGameBtn.style.display = 'block';
+            startGameBtn.disabled = false;
+            chatBox.innerHTML += `<div class="text-info"><b>Jesteś nowym rysującym!</b> Kliknij "Start rundy".</div>`;
+        } else {
+            startGameBtn.style.display = 'none';
+        }
+    }
+    
+    // Wyczyść ewentualne ukryte hasło z poprzedniej rundy (jeśli nie byłeś rysującym)
+    if (!is_drawer && !data.word) {
+        // Zakładamy, że serwer wysyła word_length dla nie-rysujących.
+        currentWordDisplay.innerHTML = `(Ukryte: ${data.word_length || '?'} liter)`;
+    }
+
+    scrollChatToBottom();
+});
+
+
+// ✅ Rysujący otrzymał hasło (tylko dla niego)
+socket.on('your_word', data => {
+  console.log("[DEBUG] Otrzymano hasło:", data.word);
+  currentWordDisplay.innerHTML = data.word;
+  
+  if (startGameBtn) {
+    startGameBtn.disabled = true;
+  }
+  
+  startTimer(data.round_time);
+  
+  chatBox.innerHTML += `<div class="text-info"><b>Twoje hasło (Rysujący):</b> ${data.word}</div>`;
+  scrollChatToBottom();
+});
+
+
+// ✅ Start gry/rundy (dla wszystkich)
+socket.on('game_started', data => {
+  chatBox.innerHTML += `<div class="text-success"><b>Runda rozpoczęta!</b></div>`;
+  
+  currentDrawerDisplay.textContent = data.drawer;
+  ctx.clearRect(0, 0, canvas.width, canvas.height); // Wyczyść canvas przy starcie rundy
+  
+  if (data.drawer !== username) {
+      // Dla zgadujących: pokaż długość hasła
+      currentWordDisplay.innerHTML = `(Ukryte: ${data.word_length || '?'} liter)`;
+      startTimer(data.round_time);
+  } else {
+      // Dla rysującego: hasło już zostało ustawione w 'your_word'
+      startTimer(data.round_time);
+  }
+
+  if (startGameBtn) {
+    startGameBtn.style.display = 'none';
+  }
+  scrollChatToBottom();
+});
+
+// ✅ Zakończenie rundy
+socket.on('round_ended', data => {
+  clearInterval(timerInterval);
+  timerDisplay.textContent = "0";
+  
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  
+  chatBox.innerHTML += `<div class="text-danger"><b>Koniec rundy!</b> Hasło to: <b>${data.word}</b></div>`;
+  if (data.winner) {
+    chatBox.innerHTML += `<div class="text-success"><b>Wygrywa:</b> ${data.winner}!</div>`;
+  }
+  scrollChatToBottom();
+  
+  // Po zakończeniu rundy ustawiamy hasło na '...'
+  currentWordDisplay.innerHTML = '...'; 
+});
+
+// =================== TIMER ===================
+function startTimer(seconds) {
+  clearInterval(timerInterval);
+  let remaining = seconds;
+  timerDisplay.textContent = remaining;
+  timerInterval = setInterval(() => {
+    remaining--;
+    timerDisplay.textContent = remaining;
+    if (remaining <= 0) {
+      clearInterval(timerInterval);
+      if (currentDrawerDisplay.textContent === username) {
+          socket.emit('end_round', { game_id: gameId });
+      }
+    }
+  }, 1000);
+}
+</script>
+{% endblock %}

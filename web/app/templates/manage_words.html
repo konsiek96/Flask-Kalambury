@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+  <div class="row">
+    <div class="col-md-8 offset-md-2">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h1 class="card-title mb-4 text-center">Zarządzanie hasłami</h1>
+
+          <!-- Formularz dodawania hasła -->
+          <form method="POST" class="d-flex mb-4">
+            <input 
+              type="text" 
+              name="word" 
+              class="form-control me-2" 
+              placeholder="Wpisz nowe hasło..." 
+              required
+            >
+            <button type="submit" class="btn btn-primary">Dodaj</button>
+          </form>
+
+          <!-- Lista haseł -->
+          <h5>Lista istniejących haseł:</h5>
+          {% if words %}
+          <ul class="list-group">
+            {% for w in words %}
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+              {{ w.text }}
+              <form 
+                method="POST" 
+                action="{{ url_for('main.delete_word', word_id=w.id) }}" 
+                onsubmit="return confirm('Czy na pewno chcesz usunąć to hasło?');"
+              >
+                <button class="btn btn-sm btn-danger">Usuń</button>
+              </form>
+            </li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          <p class="text-muted mt-3">Brak dodanych haseł.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
