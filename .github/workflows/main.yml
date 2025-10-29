@@ -1,0 +1,106 @@
+# .github/workflows/main.yml
+
+name: Kalambury CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      # Pipeline uruchomi się automatycznie po pushu do gałęzi 'main'
+      - main
+  pull_request:
+    branches:
+      # Pipeline uruchomi się także dla każdego Pull Requesta (do wstępnej weryfikacji)
+      - main
+
+# Ustawienie zmiennych środowiskowych - UZUPEŁNIJ TE WARTOŚCI!
+env:
+  # Nazwa obrazu: TwójLoginDockerHub/nazwa-aplikacji (np. kowalski/kalambury-web)
+  DOCKER_IMAGE_NAME: konsiek96/kalambury-web
+  # Pełna ścieżka do folderu zawierającego docker-compose.yml na VPS
+  VPS_APP_PATH: /home/adm_sieklucki/Docker/Kalambury
+  # Nazwa serwisu aplikacji Flask do restartowania (z Twojego docker-compose.yml)
+  FLASK_SERVICE_NAME: web 
+  # Nazwa usługi bazy danych (potrzebna do testów)
+  DB_SERVICE_NAME: db
+  
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+    
+    # 1. Continuous Integration (CI) - Testowanie i Budowanie Obrazu
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Logowanie do Docker Registry przed buildem, by pobrać podstawowe obrazy
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+          
+      # 1. Uruchomienie Lintingu (Flake8, aby nie czekać na testy)
+      - name: Run Flake8 Linting (Early Failure)
+        run: |
+          docker-compose build web # Budowanie usługi web do uruchomienia lintersa
+          docker run --rm $(docker images -q --filter reference=*_web | head -n 1) sh -c "pip install flake8 && flake8 /app"
+          
+      # 2. Uruchomienie Testów za pomocą Docker Compose
+      # Najpierw uruchamiamy bazę danych, potem testy
+      - name: Run Tests via Docker Compose
+        run: |
+          echo "::group::Starting Database for Tests"
+          # Uruchomienie bazy danych w tle
+          docker-compose up -d ${{ env.DB_SERVICE_NAME }}
+          echo "::endgroup::"
+          
+          echo "::group::Running Pytest Service"
+          # Uruchomienie usługi testowej, która automatycznie zakończy działanie z kodem wyjścia
+          docker-compose up --build --exit-code-from tests tests
+          echo "::endgroup::"
+
+      # 3. Budowanie i Push obrazu Dockera (TYLKO jeśli testy przeszły)
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          # Wskazanie na budowanie kontekstu 'web' z Twojego docker-compose.yml
+          file: ./web/Dockerfile 
+          push: true
+          # Tagowanie obrazu hashem commita, aby zapewnić unikalność
+          tags: ${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }}, ${{ env.DOCKER_IMAGE_NAME }}:latest
+          
+      # 4. Cleanup (Usunięcie kontenerów użytych w testach)
+      - name: Cleanup Containers
+        if: always() # Uruchom zawsze, nawet jeśli testy nie przeszły
+        run: docker-compose down -v --remove-orphans
+
+      # 5. Continuous Deployment (CD) - Wdrożenie na VPS
+      - name: Deploy to VPS via SSH (HTTP:6969)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' # Wdrażaj tylko po pushu do main
+        uses: appleboy/ssh-action@v1.0.1
+        with:
+          host: ${{ secrets.HOST_IP }}
+          username: ${{ secrets.HOST_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            echo "Rozpoczęcie deploymentu na VPS: ${{ secrets.HOST_IP }}"
+            cd ${{ env.VPS_APP_PATH }}
+            
+            # 1. Zalogowanie się do Docker Hub na serwerze (dla obrazów prywatnych)
+            echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u ${{ secrets.DOCKER_USERNAME }} --password-stdin
+            
+            # 2. Pobranie najnowszego obrazu
+            # Pobieramy obraz z unikalnym tagiem, który właśnie zbudowaliśmy
+            docker pull ${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }}
+
+            # 3. Aktualizacja pliku docker-compose.yml na serwerze
+            # Wymiana taga starego obrazu na nowy tag (github.sha) w usłudze 'web'
+            # Użycie 'sed' do podmiany taga
+            sed -i 's|image: ${{ env.DOCKER_IMAGE_NAME }}:.*|image: ${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }}|g' docker-compose.yml
+            
+            # 4. Automatyczny restart kontenerów
+            # --force-recreate wymusza restart serwisu 'web' z nowym obrazem
+            docker-compose up -d --force-recreate ${{ env.FLASK_SERVICE_NAME }}
+            
+            echo "Deployment pomyślny! Sprawdź http://${{ secrets.HOST_IP }}:6969"
